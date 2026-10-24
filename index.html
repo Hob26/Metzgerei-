@@ -87,6 +87,29 @@ h2{font-size:28px;margin:0;font-weight:750;letter-spacing:-.01em}
 .foot button{flex:1;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:14px;padding:13px;font:inherit;font-weight:600;cursor:pointer}
 .sum{text-align:center;color:var(--muted);font-size:13px;margin-top:14px;font-variant-numeric:tabular-nums}
 
+/* Umschalter Rezept / Gesamtplan */
+.seg{display:flex;background:var(--surface2);border-radius:12px;padding:3px;margin-top:12px}
+.seg button{flex:1;border:0;background:transparent;color:var(--muted);font:inherit;font-weight:650;font-size:15px;padding:9px;border-radius:9px;cursor:pointer}
+.seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.seg .badge{display:inline-block;min-width:20px;padding:0 6px;border-radius:99px;background:var(--accent);color:var(--accent-ink);font-size:12px;margin-left:6px;line-height:20px}
+[hidden]{display:none!important}
+.prow{display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line)}
+.prow:last-child{border-bottom:0}
+.prow .pname{font-weight:600}
+.prow.zero .pname{color:var(--muted);font-weight:500}
+.mini{display:flex;align-items:center;gap:6px}
+.mini button{width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:var(--surface2);color:var(--ink);font-size:20px;line-height:1;cursor:pointer}
+.mini input{width:62px;text-align:center;font:inherit;font-size:18px;font-weight:700;border:0;border-bottom:2px solid var(--line);background:transparent;color:var(--ink);padding:2px 0;-moz-appearance:textfield;font-variant-numeric:tabular-nums}
+.mini input:focus{outline:none;border-color:var(--accent)}
+.mini input::-webkit-outer-spin-button,.mini input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.mini span{color:var(--muted);font-size:14px;font-weight:600}
+.from{display:block;font-size:12px;color:var(--muted);font-weight:400;margin-top:2px;line-height:1.35}
+.empty{padding:22px 16px;text-align:center;color:var(--muted);font-size:14px}
+.total-big{padding:16px;text-align:center}
+.total-big b{display:block;font-size:34px;font-weight:750;font-variant-numeric:tabular-nums}
+.total-big span{font-size:13px;color:var(--muted)}
+.foot button.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+
 /* Bottom sheet für "Ich habe X kg von ..." */
 .sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;z-index:10}
 .sheet{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-radius:20px 20px 0 0;padding:20px 16px calc(20px + env(safe-area-inset-bottom));
@@ -108,8 +131,13 @@ h2{font-size:28px;margin:0;font-weight:750;letter-spacing:-.01em}
   <header>
     <h1>Wurstküche · Rechner</h1>
     <h2 id="title">Leberkäse</h2>
+    <div class="seg" role="tablist">
+      <button id="tabRecipe" class="on">Einzelrezept</button>
+      <button id="tabPlan">Gesamtplan<span class="badge" id="planBadge" hidden></span></button>
+    </div>
   </header>
 
+  <div id="recipeView">
   <div class="chips" id="chips" role="tablist"></div>
 
   <section class="card amount">
@@ -138,8 +166,22 @@ h2{font-size:28px;margin:0;font-weight:750;letter-spacing:-.01em}
 
   <div class="foot">
     <button id="reset">Häkchen zurücksetzen</button>
+    <button id="toPlan" class="pri">In Gesamtplan</button>
   </div>
   <div class="sum" id="sum"></div>
+  </div>
+
+  <div id="planView" hidden>
+    <section class="card">
+      <div class="sec-h"><h3>Was machst du?</h3><span id="planKg"></span></div>
+      <div id="planInputs"></div>
+    </section>
+    <div id="planResult"></div>
+    <div class="foot">
+      <button id="planResetChecks">Häkchen zurücksetzen</button>
+      <button id="planClear">Plan leeren</button>
+    </div>
+  </div>
 </div>
 
 <div class="sheet-bg" id="sheetBg"></div>
@@ -450,7 +492,147 @@ $("#shOk").onclick=()=>{
   setKg(t.total,true); closeSheet();
 };
 
+/* ---------- Gesamtplan ---------- */
+let view = store.get("view","recipe");
+let plan = store.get("plan", {});        // {recipeId: kg}
+let planChecks = store.get("planChecks", {});
+const planKgOf = id => (typeof plan[id]==="number" && plan[id]>0) ? plan[id] : 0;
+
+function setView(v){
+  view=v; store.set("view",v);
+  $("#tabRecipe").classList.toggle("on", v==="recipe");
+  $("#tabPlan").classList.toggle("on", v==="plan");
+  $("#recipeView").hidden = v!=="recipe";
+  $("#planView").hidden = v!=="plan";
+  if (v==="plan"){ $("#title").textContent="Gesamtplan"; renderPlan(); } else renderAll();
+}
+function updateBadge(){
+  const n = RECIPES.filter(r=>planKgOf(r.id)>0).length;
+  $("#planBadge").hidden = n===0; $("#planBadge").textContent = n;
+}
+function setPlanKg(id, v, skipInputs){
+  v = Math.max(0, clean(+v||0));
+  if (v>0) plan[id]=v; else delete plan[id];
+  store.set("plan",plan); updateBadge();
+  renderPlan(skipInputs);
+}
+
+function renderPlanInputs(){
+  const el=$("#planInputs"); el.innerHTML="";
+  RECIPES.forEach(r=>{
+    const kg=planKgOf(r.id);
+    const row=document.createElement("div");
+    row.className="prow"+(kg>0?"":" zero");
+    row.innerHTML=`<div class="pname">${r.name}</div>
+      <div class="mini"><button aria-label="weniger">−</button>
+      <input type="number" inputmode="decimal" min="0" step="0.5" value="${kg||""}" placeholder="0">
+      <span>kg</span><button aria-label="mehr">+</button></div>`;
+    const [minus,plus]=row.querySelectorAll("button"); const inp=row.querySelector("input");
+    minus.onclick=()=>setPlanKg(r.id, Math.max(0, planKgOf(r.id)-0.5));
+    plus.onclick=()=>setPlanKg(r.id, planKgOf(r.id)+0.5);
+    inp.addEventListener("input",()=>{
+      const v=parseFloat(String(inp.value).replace(",","."));
+      row.classList.toggle("zero", !(v>0));
+      setPlanKg(r.id, isNaN(v)?0:v, true);
+    });
+    el.appendChild(row);
+  });
+}
+
+function aggregate(){
+  // Zutaten mit gleichem Namen + gleicher Einheit werden addiert
+  const meat=new Map(), spices=new Map(), feel=new Map();
+  RECIPES.forEach(r=>{
+    const kg=planKgOf(r.id); if(!(kg>0)) return;
+    r.meat.forEach(m=>{
+      const a=clean(kg/100*m.pct);
+      const e=meat.get(m.n)||{n:m.n,u:"kg",total:0,from:[]};
+      e.total=clean(e.total+a); e.from.push([r.name,a]); meat.set(m.n,e);
+    });
+    r.spices.forEach(s=>{
+      if (s.feel){ const e=feel.get(s.n)||{n:s.n,from:[]}; e.from.push([r.name]); feel.set(s.n,e); return; }
+      const a = s.fixed!==undefined ? s.fixed : clean(kg*s.perKg);
+      const key=s.n+"|"+s.u;
+      const e=spices.get(key)||{n:s.n,u:s.u,total:0,from:[],fixed:false};
+      e.total=clean(e.total+a); e.from.push([r.name,a]); if(s.fixed!==undefined) e.fixed=true;
+      spices.set(key,e);
+    });
+  });
+  return {meat:[...meat.values()], spices:[...spices.values()], feel:[...feel.values()]};
+}
+
+function fmtAmount(a,u){
+  if (u==="kg") return fmtKg(a);
+  if (u==="g") return fmtGram(a);
+  if (u==="ml") return fmt(a,1);
+  return fmt(a,2);
+}
+
+function planRow(key, name, fromHTML, valHTML){
+  const row=document.createElement("div");
+  row.className="row"+(planChecks[key]?" done":"");
+  row.innerHTML=`<div class="chk"><svg viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3L13 4.5"/></svg></div>
+    <div class="name">${name}<span class="from">${fromHTML}</span></div><div class="val">${valHTML}</div>`;
+  row.onclick=()=>{ planChecks[key]=!planChecks[key]; if(!planChecks[key]) delete planChecks[key]; store.set("planChecks",planChecks); row.classList.toggle("done"); };
+  return row;
+}
+
+function renderPlan(skipInputs){
+  if(!skipInputs) renderPlanInputs();
+  const totalKg = clean(RECIPES.reduce((s,r)=>s+planKgOf(r.id),0));
+  $("#planKg").textContent = totalKg>0 ? `${fmtKg(totalKg)} kg gesamt` : "";
+  const out=$("#planResult"); out.innerHTML="";
+  if (!(totalKg>0)){
+    out.innerHTML=`<section class="card"><div class="empty">Trag oben ein, wie viel kg du von welcher Wurst machst –<br>hier erscheint dann die Gesamtliste.</div></section>`;
+    return;
+  }
+  const ag=aggregate();
+  const fromList = (arr,u) => arr.map(([n,a])=> a===undefined ? n : `${n} ${fmtAmount(a,u)}`).join(" · ");
+
+  // Fleisch & Eis
+  const meatKg=clean(ag.meat.reduce((s,e)=>s+e.total,0));
+  const s1=document.createElement("section"); s1.className="card";
+  s1.innerHTML=`<div class="total-big"><b>${fmtKg(meatKg)} kg</b><span>Fleisch, Fett &amp; Eis zusammen</span></div>
+    <div class="sec-h" style="border-top:1px solid var(--line)"><h3>Fleisch, Fett &amp; Eis</h3><span>${ag.meat.length} Posten</span></div>`;
+  const m=document.createElement("div");
+  ag.meat.forEach(e=>{
+    m.appendChild(planRow("m|"+e.n, e.n, fromList(e.from,"kg"),
+      `${fmtKg(e.total)}<small>kg</small><span class="sub">${fmt(clean(e.total*1000),1)} g</span>`));
+  });
+  s1.appendChild(m); out.appendChild(s1);
+
+  // Gewürze
+  const grams=ag.spices.filter(e=>e.u==="g"), other=ag.spices.filter(e=>e.u!=="g");
+  const gSum=clean(grams.reduce((s,e)=>s+e.total,0));
+  const s2=document.createElement("section"); s2.className="card";
+  s2.innerHTML=`<div class="sec-h"><h3>Gewürze</h3><span>${fmtGram(gSum)} g gesamt</span></div>`;
+  const g=document.createElement("div");
+  grams.forEach(e=>{
+    let name=e.n+(e.fixed?`<span class="tag fix">fix</span>`:"");
+    g.appendChild(planRow("s|"+e.n+"|g", name, fromList(e.from,"g"), `${fmtGram(e.total)}<small>g</small>`));
+  });
+  s2.appendChild(g); out.appendChild(s2);
+
+  // Sonstiges (Ei, Milch) + nach Gefühl
+  if (other.length || ag.feel.length){
+    const s3=document.createElement("section"); s3.className="card";
+    s3.innerHTML=`<div class="sec-h"><h3>Sonstiges</h3><span></span></div>`;
+    const o=document.createElement("div");
+    other.forEach(e=>o.appendChild(planRow("s|"+e.n+"|"+e.u, e.n, fromList(e.from,e.u), `${fmtAmount(e.total,e.u)}<small>${e.u}</small>`)));
+    ag.feel.forEach(e=>o.appendChild(planRow("f|"+e.n, e.n+`<span class="tag feel">nach Gefühl</span>`, fromList(e.from), `<span style="color:var(--muted);font-size:15px">—</span>`)));
+    s3.appendChild(o); out.appendChild(s3);
+  }
+}
+
+$("#tabRecipe").onclick=()=>setView("recipe");
+$("#tabPlan").onclick=()=>setView("plan");
+$("#toPlan").onclick=()=>{ plan[current]=getKg(); if(!(plan[current]>0)) delete plan[current]; store.set("plan",plan); updateBadge(); setView("plan"); };
+$("#planResetChecks").onclick=()=>{ planChecks={}; store.set("planChecks",planChecks); renderPlan(); };
+$("#planClear").onclick=()=>{ plan={}; planChecks={}; store.set("plan",plan); store.set("planChecks",planChecks); updateBadge(); renderPlan(); };
+
+updateBadge();
 renderAll();
+setView(view);
 </script>
 </body>
 </html>
