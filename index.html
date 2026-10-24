@@ -336,7 +336,9 @@ function renderChips(){
   const el = $("#chips"); el.innerHTML = "";
   RECIPES.forEach(r=>{
     const b = document.createElement("button");
-    b.className="chip"; b.role="tab"; b.textContent=r.name;
+    b.className="chip"; b.role="tab";
+    const pk = (typeof plan!=="undefined" && plan[r.id]>0) ? plan[r.id] : 0;
+    b.textContent = pk ? `${r.name} · ${fmtKg(pk)} kg` : r.name;
     b.setAttribute("aria-selected", r.id===current);
     b.onclick=()=>{ current=r.id; store.set("recipe",current); basisInfo=null; renderAll(); b.scrollIntoView({inline:"center",block:"nearest",behavior:"smooth"}); };
     el.appendChild(b);
@@ -377,9 +379,11 @@ function renderAll(){
   $("#meatTitle").textContent = r.meatTitle;
   renderChips(); renderPresets();
 
-  $("#basis").innerHTML = basisInfo
+  const inPlan = typeof plan!=="undefined" && plan[r.id]>0;
+  $("#basis").innerHTML = (basisInfo
     ? `berechnet aus <b>${fmtKg(basisInfo.kg)} kg ${basisInfo.name}</b>`
-    : "";
+    : "") + (inPlan ? `${basisInfo?" · ":""}<b>im Gesamtplan</b> – Änderungen werden übernommen` : "");
+  $("#toPlan").textContent = inPlan ? "Aus Plan entfernen" : "In Gesamtplan";
 
   // Fleisch
   const meatEl=$("#meat"); meatEl.innerHTML="";
@@ -442,6 +446,7 @@ function renderAll(){
 function setKg(v, keepBasis){
   v = Math.max(0, clean(+v||0));
   kgByRecipe[current]=v; store.set("kg",kgByRecipe);
+  syncToPlan(current, v);
   if(!keepBasis) basisInfo=null;
   renderAll();
 }
@@ -450,7 +455,7 @@ function setKg(v, keepBasis){
 $("#kg").addEventListener("input", e=>{
   const v=parseFloat(String(e.target.value).replace(",","."));
   if (isNaN(v)) return;
-  kgByRecipe[current]=Math.max(0,v); store.set("kg",kgByRecipe); basisInfo=null;
+  kgByRecipe[current]=Math.max(0,v); store.set("kg",kgByRecipe); syncToPlan(current, Math.max(0,v)); basisInfo=null;
   // Eingabefeld nicht neu schreiben, während getippt wird
   const keep=e.target.value; renderAll(); $("#kg").value=keep;
 });
@@ -498,6 +503,15 @@ let plan = store.get("plan", {});        // {recipeId: kg}
 let planChecks = store.get("planChecks", {});
 const planKgOf = id => (typeof plan[id]==="number" && plan[id]>0) ? plan[id] : 0;
 
+// Steht ein Rezept im Gesamtplan, wird jede Änderung im Einzelrezept dorthin übernommen
+function syncToPlan(id, v){
+  if (!(planKgOf(id)>0)) return;
+  if (v>0) plan[id]=clean(v); else delete plan[id];
+  store.set("plan",plan); updateBadge();
+}
+Object.keys(plan).forEach(id=>{ if (planKgOf(id)>0) kgByRecipe[id]=plan[id]; });
+store.set("kg",kgByRecipe);
+
 function setView(v){
   view=v; store.set("view",v);
   $("#tabRecipe").classList.toggle("on", v==="recipe");
@@ -512,7 +526,7 @@ function updateBadge(){
 }
 function setPlanKg(id, v, skipInputs){
   v = Math.max(0, clean(+v||0));
-  if (v>0) plan[id]=v; else delete plan[id];
+  if (v>0){ plan[id]=v; kgByRecipe[id]=v; store.set("kg",kgByRecipe); } else delete plan[id];
   store.set("plan",plan); updateBadge();
   renderPlan(skipInputs);
 }
@@ -626,7 +640,10 @@ function renderPlan(skipInputs){
 
 $("#tabRecipe").onclick=()=>setView("recipe");
 $("#tabPlan").onclick=()=>setView("plan");
-$("#toPlan").onclick=()=>{ plan[current]=getKg(); if(!(plan[current]>0)) delete plan[current]; store.set("plan",plan); updateBadge(); setView("plan"); };
+$("#toPlan").onclick=()=>{
+  if (planKgOf(current)>0){ delete plan[current]; store.set("plan",plan); updateBadge(); renderAll(); return; }
+  plan[current]=getKg(); if(!(plan[current]>0)) delete plan[current]; store.set("plan",plan); updateBadge(); setView("plan");
+};
 $("#planResetChecks").onclick=()=>{ planChecks={}; store.set("planChecks",planChecks); renderPlan(); };
 $("#planClear").onclick=()=>{ plan={}; planChecks={}; store.set("plan",plan); store.set("planChecks",planChecks); updateBadge(); renderPlan(); };
 
